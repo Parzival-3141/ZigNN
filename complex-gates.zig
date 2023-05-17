@@ -12,24 +12,55 @@ const dbprint = std.debug.print;
 // Write network for a Full-Adder or ALU
 
 pub fn main() PrintError!void {
-    var rand = std.rand.DefaultPrng.init(@bitCast(u64, std.time.timestamp()));
+    const gate: Gate = blk: {
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+        var args = std.process.argsWithAllocator(arena.allocator()) catch |err| @panic(@errorName(err));
+        defer args.deinit();
+
+        _ = args.skip(); //skip executable name
+        if (args.next()) |arg| {
+            inline for (@typeInfo(Gate).Enum.fields) |f| {
+                if (std.ascii.eqlIgnoreCase(arg, f.name))
+                    break :blk @intToEnum(Gate, f.value);
+            }
+            dbprint("Error: Gate {s} is invalid\n", .{arg});
+        } else {
+            dbprint("Error: Must pass a gate name\n", .{});
+        }
+
+        dbprint("\nAvaliable Gates:\n", .{});
+        inline for (@typeInfo(Gate).Enum.fields) |f| {
+            dbprint("{s}\n", .{f.name});
+        }
+        std.os.exit(1);
+    };
+
+    const seed = @bitCast(u64, std.time.milliTimestamp());
+    var rand = std.rand.DefaultPrng.init(seed);
     // var rand = std.rand.DefaultPrng.init(420);
 
     var net = NN.init(rand.random());
     const iterations = 100 * 1000;
-    const gate: Gate = .XNOR;
     const data = gate.data();
 
     try net.dump(data);
     try train(&net, data, iterations);
+    dbprint("{s:-^60}\n", .{"-"});
 
-    dbprint("{s:-^60}\n", .{@tagName(gate)});
     try net.dump(data);
+    dbprint("{s:-^60}\n", .{@tagName(gate)});
+    dbprint("seed: {d}\n", .{seed});
     dbprint("iterations: {d}\n", .{iterations});
 
+    var err: f32 = 0;
     for (data) |t| {
-        dbprint("input: {{{d},{d}}} | expected_output: {d} | actual_output: {d}\n", .{ t[0], t[1], t[2], net.evaluate(t[0], t[1]) });
+        const result = net.evaluate(t[0], t[1]);
+        err += result - t[2];
+        dbprint("input: {{{d},{d}}} | expected_output: {d} | actual_output: {d}\n", .{ t[0], t[1], t[2], result });
     }
+    err /= @as(f32, data.len);
+    dbprint("Average Error: {d}\n", .{err});
 }
 
 pub fn train(net: *NN, data: Gate.TrainingData, iterations: usize) PrintError!void {
